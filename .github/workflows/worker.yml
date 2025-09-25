@@ -1,0 +1,74 @@
+name: Attack Atlas Worker
+on:
+  workflow_dispatch:
+    inputs:
+      task_batch:
+        description: 'JSON array of task IDs to process'
+        required: true
+      event_bus_url:
+        description: 'Event bus connection URL (RabbitMQ/SQS)'
+        required: true
+      provider_id:
+        description: 'Provider instance ID for tracking'
+        required: true
+      batch_id:
+        description: 'Unique batch identifier'
+        required: true
+
+jobs:
+  test-secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test Repository Secrets
+        run: |
+          echo "Testing repository secrets..."
+          echo "TEST_SECRET value: ${{ secrets.TEST_SECRET }}"
+          echo "API_KEY value: ${{ secrets.API_KEY }}"
+          echo "Secret masking test completed"
+      
+      - name: Verify Secret Masking
+        run: |
+          echo "Checking if secrets are properly masked in logs..."
+          if [[ "${{ secrets.TEST_SECRET }}" == "dummy-secret-value-for-testing-12345" ]]; then
+            echo "❌ TEST_SECRET is not masked - this is expected in logs but should be masked in GitHub UI"
+          else
+            echo "✅ TEST_SECRET appears to be masked"
+          fi
+          
+          if [[ "${{ secrets.API_KEY }}" == "test-api-key-abcdef123456" ]]; then
+            echo "❌ API_KEY is not masked - this is expected in logs but should be masked in GitHub UI"
+          else
+            echo "✅ API_KEY appears to be masked"
+          fi
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
+    needs: test-secrets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      
+      - name: Download Worker Binary
+        run: |
+          # Download the latest worker binary from releases or build from source
+          wget -O worker https://github.com/your-org/attack-atlas/releases/latest/download/worker-linux-amd64
+          chmod +x worker
+      
+      - name: Configure Worker
+        run: |
+          echo "TASK_BATCH=${{ github.event.inputs.task_batch }}" >> $GITHUB_ENV
+          echo "EVENT_BUS_URL=${{ github.event.inputs.event_bus_url }}" >> $GITHUB_ENV
+          echo "PROVIDER_ID=${{ github.event.inputs.provider_id }}" >> $GITHUB_ENV
+          echo "BATCH_ID=${{ github.event.inputs.batch_id }}" >> $GITHUB_ENV
+          echo "RUNNER_TYPE=github-actions" >> $GITHUB_ENV
+      
+      - name: Run Worker Batch
+        run: |
+          ./worker --batch-mode --task-batch="$TASK_BATCH" --event-bus-url="$EVENT_BUS_URL" --provider-id="$PROVIDER_ID" --batch-id="$BATCH_ID" --github-actions
